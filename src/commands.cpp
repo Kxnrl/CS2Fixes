@@ -306,6 +306,7 @@ bool g_bEnableStopSound = false;
 
 FAKE_BOOL_CVAR(cs2f_stopsound_enable, "Whether to enable stopsound", g_bEnableStopSound, false, false)
 
+
 CON_COMMAND_CHAT(stopsound, "- toggle weapon sounds")
 {
 	if (!g_bEnableStopSound)
@@ -592,7 +593,7 @@ CON_COMMAND_CHAT(setorigin, "<vector> - set your origin")
 	Vector vecNewOrigin;
 	V_StringToVector(args.ArgS(), vecNewOrigin);
 
-	pPawn->SetAbsOrigin(vecNewOrigin);
+	pPawn->Teleport(&vecNewOrigin, nullptr, nullptr);
 
 	ClientPrint(player, HUD_PRINTTALK, CHAT_PREFIX"Your origin is now %f %f %f", vecNewOrigin.x, vecNewOrigin.y, vecNewOrigin.z);
 }
