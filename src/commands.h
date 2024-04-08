@@ -35,6 +35,9 @@ class CChatCommand;
 
 extern CUtlMap<uint32, CChatCommand*> g_CommandList;
 
+extern bool g_bEnableCommands;
+extern bool g_bEnableAdminCommands;
+
 extern bool g_bEnableHide;
 extern bool g_bEnableStopSound;
 
@@ -53,6 +56,14 @@ public:
 
 	void operator()(const CCommand &args, CCSPlayerController *player)
 	{
+		// Server disabled ALL chat commands
+		if (!g_bEnableCommands)
+			return;
+
+		// Server disabled admin chat commands
+		if (!g_bEnableAdminCommands && m_nAdminFlags > ADMFLAG_NONE)
+			return;
+
 		// Only allow connected players to run chat commands
 		if (player && !player->IsConnected())
 			return;
@@ -76,10 +87,10 @@ public:
 
 private:
 	FnChatCommandCallback_t m_pfnCallback;
-	uint64 m_nAdminFlags;
-	uint64 m_nCmdFlags;
 	std::string m_sName;
 	std::string m_sDescription;
+	uint64 m_nAdminFlags;
+	uint64 m_nCmdFlags;
 };
 
 struct WeaponMapEntry_t

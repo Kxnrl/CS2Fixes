@@ -28,7 +28,7 @@
 #include "icvar.h"
 #include "interface.h"
 #include "tier0/dbg.h"
-#include "cschemasystem.h"
+#include "schemasystem/schemasystem.h"
 #include "plat.h"
 #include "entitysystem.h"
 #include "engine/igameeventsystem.h"
@@ -83,12 +83,7 @@ void Panic(const char *msg, ...)
 	char buf[1024] = {};
 	V_vsnprintf(buf, sizeof(buf) - 1, msg, args);
 
-	if (CommandLine()->HasParm("-dedicated"))
-		Warning("[CS2Fixes] %s", buf);
-#ifdef _WIN32
-	else
-		MessageBoxA(nullptr, buf, "Warning", 0);
-#endif
+	Warning("[CS2Fixes] %s", buf);
 
 	va_end(args);
 }
@@ -118,7 +113,6 @@ IGameEventManager2 *g_gameEventManager = nullptr;
 INetworkGameServer *g_pNetworkGameServer = nullptr;
 CGameEntitySystem *g_pEntitySystem = nullptr;
 CEntityListener *g_pEntityListener = nullptr;
-CSchemaSystem *g_pSchemaSystem2 = nullptr;
 CGlobalVars *gpGlobals = nullptr;
 CPlayerManager *g_playerManager = nullptr;
 IVEngineServer2 *g_pEngineServer2 = nullptr;
@@ -139,9 +133,9 @@ bool CS2Fixes::Load(PluginId id, ISmmAPI *ismm, char *error, size_t maxlen, bool
 	PLUGIN_SAVEVARS();
 
 	GET_V_IFACE_CURRENT(GetEngineFactory, g_pEngineServer2, IVEngineServer2, SOURCE2ENGINETOSERVER_INTERFACE_VERSION);
-	GET_V_IFACE_CURRENT(GetEngineFactory, g_pGameResourceServiceServer, IGameResourceServiceServer, GAMERESOURCESERVICESERVER_INTERFACE_VERSION);
+	GET_V_IFACE_CURRENT(GetEngineFactory, g_pGameResourceServiceServer, IGameResourceService, GAMERESOURCESERVICESERVER_INTERFACE_VERSION);
 	GET_V_IFACE_CURRENT(GetEngineFactory, g_pCVar, ICvar, CVAR_INTERFACE_VERSION);
-	GET_V_IFACE_CURRENT(GetEngineFactory, g_pSchemaSystem2, CSchemaSystem, SCHEMASYSTEM_INTERFACE_VERSION);
+	GET_V_IFACE_CURRENT(GetEngineFactory, g_pSchemaSystem, ISchemaSystem, SCHEMASYSTEM_INTERFACE_VERSION);
 	GET_V_IFACE_ANY(GetServerFactory, g_pSource2Server, ISource2Server, SOURCE2SERVER_INTERFACE_VERSION);
 	GET_V_IFACE_ANY(GetServerFactory, g_pSource2ServerConfig, ISource2ServerConfig, SOURCE2SERVERCONFIG_INTERFACE_VERSION);
 	GET_V_IFACE_ANY(GetServerFactory, g_pSource2GameEntities, ISource2GameEntities, SOURCE2GAMEENTITIES_INTERFACE_VERSION);
@@ -156,20 +150,20 @@ bool CS2Fixes::Load(PluginId id, ISmmAPI *ismm, char *error, size_t maxlen, bool
 
 	Message( "Starting plugin.\n" );
 
-	SH_ADD_HOOK_MEMFUNC(IServerGameDLL, GameFrame, g_pSource2Server, this, &CS2Fixes::Hook_GameFrame, true);
-	SH_ADD_HOOK_MEMFUNC(IServerGameDLL, GameServerSteamAPIActivated, g_pSource2Server, this, &CS2Fixes::Hook_GameServerSteamAPIActivated, false);
-	SH_ADD_HOOK_MEMFUNC(IServerGameDLL, GameServerSteamAPIDeactivated, g_pSource2Server, this, &CS2Fixes::Hook_GameServerSteamAPIDeactivated, false);
-	SH_ADD_HOOK_MEMFUNC(IServerGameClients, ClientActive, g_pSource2GameClients, this, &CS2Fixes::Hook_ClientActive, true);
-	SH_ADD_HOOK_MEMFUNC(IServerGameClients, ClientDisconnect, g_pSource2GameClients, this, &CS2Fixes::Hook_ClientDisconnect, true);
-	SH_ADD_HOOK_MEMFUNC(IServerGameClients, ClientPutInServer, g_pSource2GameClients, this, &CS2Fixes::Hook_ClientPutInServer, true);
-	SH_ADD_HOOK_MEMFUNC(IServerGameClients, ClientSettingsChanged, g_pSource2GameClients, this, &CS2Fixes::Hook_ClientSettingsChanged, false);
-	SH_ADD_HOOK_MEMFUNC(IServerGameClients, OnClientConnected, g_pSource2GameClients, this, &CS2Fixes::Hook_OnClientConnected, false);
-	SH_ADD_HOOK_MEMFUNC(IServerGameClients, ClientConnect, g_pSource2GameClients, this, &CS2Fixes::Hook_ClientConnect, false );
-	SH_ADD_HOOK_MEMFUNC(IServerGameClients, ClientCommand, g_pSource2GameClients, this, &CS2Fixes::Hook_ClientCommand, false);
-	SH_ADD_HOOK_MEMFUNC(IGameEventSystem, PostEventAbstract, g_gameEventSystem, this, &CS2Fixes::Hook_PostEvent, false);
-	SH_ADD_HOOK_MEMFUNC(INetworkServerService, StartupServer, g_pNetworkServerService, this, &CS2Fixes::Hook_StartupServer, true);
-	SH_ADD_HOOK_MEMFUNC(ISource2GameEntities, CheckTransmit, g_pSource2GameEntities, this, &CS2Fixes::Hook_CheckTransmit, true);
-	SH_ADD_HOOK_MEMFUNC(ICvar, DispatchConCommand, g_pCVar, this, &CS2Fixes::Hook_DispatchConCommand, false);
+	SH_ADD_HOOK(IServerGameDLL, GameFrame, g_pSource2Server, SH_MEMBER(this, &CS2Fixes::Hook_GameFrame), true);
+	SH_ADD_HOOK(IServerGameDLL, GameServerSteamAPIActivated, g_pSource2Server, SH_MEMBER(this, &CS2Fixes::Hook_GameServerSteamAPIActivated), false);
+	SH_ADD_HOOK(IServerGameDLL, GameServerSteamAPIDeactivated, g_pSource2Server, SH_MEMBER(this, &CS2Fixes::Hook_GameServerSteamAPIDeactivated), false);
+	SH_ADD_HOOK(IServerGameClients, ClientActive, g_pSource2GameClients, SH_MEMBER(this, &CS2Fixes::Hook_ClientActive), true);
+	SH_ADD_HOOK(IServerGameClients, ClientDisconnect, g_pSource2GameClients, SH_MEMBER(this, &CS2Fixes::Hook_ClientDisconnect), true);
+	SH_ADD_HOOK(IServerGameClients, ClientPutInServer, g_pSource2GameClients, SH_MEMBER(this, &CS2Fixes::Hook_ClientPutInServer), true);
+	SH_ADD_HOOK(IServerGameClients, ClientSettingsChanged, g_pSource2GameClients, SH_MEMBER(this, &CS2Fixes::Hook_ClientSettingsChanged), false);
+	SH_ADD_HOOK(IServerGameClients, OnClientConnected, g_pSource2GameClients, SH_MEMBER(this, &CS2Fixes::Hook_OnClientConnected), false);
+	SH_ADD_HOOK(IServerGameClients, ClientConnect, g_pSource2GameClients, SH_MEMBER(this, &CS2Fixes::Hook_ClientConnect), false );
+	SH_ADD_HOOK(IServerGameClients, ClientCommand, g_pSource2GameClients, SH_MEMBER(this, &CS2Fixes::Hook_ClientCommand), false);
+	SH_ADD_HOOK(IGameEventSystem, PostEventAbstract, g_gameEventSystem, SH_MEMBER(this, &CS2Fixes::Hook_PostEvent), false);
+	SH_ADD_HOOK(INetworkServerService, StartupServer, g_pNetworkServerService, SH_MEMBER(this, &CS2Fixes::Hook_StartupServer), true);
+	SH_ADD_HOOK(ISource2GameEntities, CheckTransmit, g_pSource2GameEntities, SH_MEMBER(this, &CS2Fixes::Hook_CheckTransmit), true);
+	SH_ADD_HOOK(ICvar, DispatchConCommand, g_pCVar, SH_MEMBER(this, &CS2Fixes::Hook_DispatchConCommand), false);
 
 	META_CONPRINTF( "All hooks started!\n" );
 
@@ -277,18 +271,20 @@ bool CS2Fixes::Load(PluginId id, ISmmAPI *ismm, char *error, size_t maxlen, bool
 
 bool CS2Fixes::Unload(char *error, size_t maxlen)
 {
-	SH_REMOVE_HOOK_MEMFUNC(IServerGameDLL, GameFrame, g_pSource2Server, this, &CS2Fixes::Hook_GameFrame, true);
-	SH_REMOVE_HOOK_MEMFUNC(IServerGameClients, ClientActive, g_pSource2GameClients, this, &CS2Fixes::Hook_ClientActive, true);
-	SH_REMOVE_HOOK_MEMFUNC(IServerGameClients, ClientDisconnect, g_pSource2GameClients, this, &CS2Fixes::Hook_ClientDisconnect, true);
-	SH_REMOVE_HOOK_MEMFUNC(IServerGameClients, ClientPutInServer, g_pSource2GameClients, this, &CS2Fixes::Hook_ClientPutInServer, true);
-	SH_REMOVE_HOOK_MEMFUNC(IServerGameClients, ClientSettingsChanged, g_pSource2GameClients, this, &CS2Fixes::Hook_ClientSettingsChanged, false);
-	SH_REMOVE_HOOK_MEMFUNC(IServerGameClients, OnClientConnected, g_pSource2GameClients, this, &CS2Fixes::Hook_OnClientConnected, false);
-	SH_REMOVE_HOOK_MEMFUNC(IServerGameClients, ClientConnect, g_pSource2GameClients, this, &CS2Fixes::Hook_ClientConnect, false);
-	SH_REMOVE_HOOK_MEMFUNC(IServerGameClients, ClientCommand, g_pSource2GameClients, this, &CS2Fixes::Hook_ClientCommand, false);
-	SH_REMOVE_HOOK_MEMFUNC(IGameEventSystem, PostEventAbstract, g_gameEventSystem, this, &CS2Fixes::Hook_PostEvent, false);
-	SH_REMOVE_HOOK_MEMFUNC(INetworkServerService, StartupServer, g_pNetworkServerService, this, &CS2Fixes::Hook_StartupServer, true);
-	SH_REMOVE_HOOK_MEMFUNC(ISource2GameEntities, CheckTransmit, g_pSource2GameEntities, this, &CS2Fixes::Hook_CheckTransmit, true);
-	SH_REMOVE_HOOK_MEMFUNC(ICvar, DispatchConCommand, g_pCVar, this, &CS2Fixes::Hook_DispatchConCommand, false);
+	SH_REMOVE_HOOK(IServerGameDLL, GameFrame, g_pSource2Server, SH_MEMBER(this, &CS2Fixes::Hook_GameFrame), true);
+	SH_REMOVE_HOOK(IServerGameDLL, GameServerSteamAPIActivated, g_pSource2Server, SH_MEMBER(this, &CS2Fixes::Hook_GameServerSteamAPIActivated), false);
+	SH_REMOVE_HOOK(IServerGameDLL, GameServerSteamAPIDeactivated, g_pSource2Server, SH_MEMBER(this, &CS2Fixes::Hook_GameServerSteamAPIDeactivated), false);
+	SH_REMOVE_HOOK(IServerGameClients, ClientActive, g_pSource2GameClients, SH_MEMBER(this, &CS2Fixes::Hook_ClientActive), true);
+	SH_REMOVE_HOOK(IServerGameClients, ClientDisconnect, g_pSource2GameClients, SH_MEMBER(this, &CS2Fixes::Hook_ClientDisconnect), true);
+	SH_REMOVE_HOOK(IServerGameClients, ClientPutInServer, g_pSource2GameClients, SH_MEMBER(this, &CS2Fixes::Hook_ClientPutInServer), true);
+	SH_REMOVE_HOOK(IServerGameClients, ClientSettingsChanged, g_pSource2GameClients, SH_MEMBER(this, &CS2Fixes::Hook_ClientSettingsChanged), false);
+	SH_REMOVE_HOOK(IServerGameClients, OnClientConnected, g_pSource2GameClients, SH_MEMBER(this, &CS2Fixes::Hook_OnClientConnected), false);
+	SH_REMOVE_HOOK(IServerGameClients, ClientConnect, g_pSource2GameClients, SH_MEMBER(this, &CS2Fixes::Hook_ClientConnect), false );
+	SH_REMOVE_HOOK(IServerGameClients, ClientCommand, g_pSource2GameClients, SH_MEMBER(this, &CS2Fixes::Hook_ClientCommand), false);
+	SH_REMOVE_HOOK(IGameEventSystem, PostEventAbstract, g_gameEventSystem, SH_MEMBER(this, &CS2Fixes::Hook_PostEvent), false);
+	SH_REMOVE_HOOK(INetworkServerService, StartupServer, g_pNetworkServerService, SH_MEMBER(this, &CS2Fixes::Hook_StartupServer), true);
+	SH_REMOVE_HOOK(ISource2GameEntities, CheckTransmit, g_pSource2GameEntities, SH_MEMBER(this, &CS2Fixes::Hook_CheckTransmit), true);
+	SH_REMOVE_HOOK(ICvar, DispatchConCommand, g_pCVar, SH_MEMBER(this, &CS2Fixes::Hook_DispatchConCommand), false);
 
 	ConVar_Unregister();
 
@@ -410,22 +406,14 @@ void CS2Fixes::Hook_DispatchConCommand(ConCommandHandle cmdHandle, const CComman
 	}
 }
 
-void CS2Fixes::Hook_StartupServer(const GameSessionConfiguration_t& config, ISource2WorldSession*, const char*)
+void CS2Fixes::Hook_StartupServer(const GameSessionConfiguration_t& config, ISource2WorldSession *pSession, const char *pszMapName)
 {
 	g_pNetworkGameServer = g_pNetworkServerService->GetIGameServer();
 	g_pEntitySystem = GameEntitySystem();
 	g_pEntitySystem->AddListenerEntity(g_pEntityListener);
 	gpGlobals = g_pNetworkGameServer->GetGlobals();
 
-	Message("Hook_StartupServer: %s\n", gpGlobals->mapname);
-
-	// run our cfg
-	g_pEngineServer2->ServerCommand("exec cs2fixes/cs2fixes");
-
-	// Run map cfg (if present)
-	char cmd[MAX_PATH];
-	V_snprintf(cmd, sizeof(cmd), "exec cs2fixes/maps/%s", gpGlobals->mapname);
-	g_pEngineServer2->ServerCommand(cmd);
+	Message("Hook_StartupServer: %s\n", pszMapName);
 
 	if(g_bHasTicked)
 		RemoveMapTimers();
@@ -433,9 +421,6 @@ void CS2Fixes::Hook_StartupServer(const GameSessionConfiguration_t& config, ISou
 	g_bHasTicked = false;
 
 	RegisterEventListeners();
-	g_playerManager->SetupInfiniteAmmo();
-
-	g_ClientsPendingAddon.RemoveAll();
 
 	// Disable RTV and Extend votes after map has just started
 	g_RTVState = ERTVState::MAP_START;
@@ -451,9 +436,6 @@ void CS2Fixes::Hook_StartupServer(const GameSessionConfiguration_t& config, ISou
 			g_ExtendState = EExtendState::EXTEND_ALLOWED;
 		return -1.0f;
 	});
-
-	if (g_bEnableZR)
-		ZR_OnStartupServer();
 }
 
 void CS2Fixes::Hook_GameServerSteamAPIActivated()
@@ -582,11 +564,6 @@ void CS2Fixes::Hook_OnClientConnected(CPlayerSlot slot, const char* pszName, uin
 		g_playerManager->OnBotConnected(slot);
 }
 
-extern std::string g_sExtraAddon;
-
-float g_flRejoinTimeout;
-FAKE_FLOAT_CVAR(cs2f_extra_addon_timeout, "How long until clients are timed out in between connects for the extra addon", g_flRejoinTimeout, 15.f, false);
-
 bool CS2Fixes::Hook_ClientConnect( CPlayerSlot slot, const char *pszName, uint64 xuid, const char *pszNetworkID, bool unk1, CBufferString *pRejectReason )
 {
 	Message( "Hook_ClientConnect(%d, \"%s\", %lli, \"%s\", %d, \"%s\")\n", slot, pszName, xuid, pszNetworkID, unk1, pRejectReason->ToGrowable()->Get() );
@@ -594,39 +571,6 @@ bool CS2Fixes::Hook_ClientConnect( CPlayerSlot slot, const char *pszName, uint64
 	// Player is banned
 	if (!g_playerManager->OnClientConnected(slot, xuid, pszNetworkID))
 		RETURN_META_VALUE(MRES_SUPERCEDE, false);
-
-	CServerSideClient *pClient = GetClientBySlot(slot);
-
-	// We don't have an extra addon set so do nothing here
-	if (g_sExtraAddon.empty())
-		RETURN_META_VALUE(MRES_IGNORED, true);
-
-	Message("Client %lli", xuid);
-
-	// Store the client's ID temporarily as they will get reconnected once the extra addon is sent
-	// This gets checked for in SendNetMessage so we don't repeatedly send the changelevel signon state
-	// The only caveat to this is that there's no way for us to verify if the client has actually downloaded the extra addon,
-	// since they're fully disconnected while downloading it, so the best we can do is use a timeout interval
-	int index;
-	ClientJoinInfo_t *pPendingClient = GetPendingClient(xuid, index);
-	
-	if (!pPendingClient)
-	{
-		// Client joined for the first time or after a timeout
-		Msg(" will reconnect for addon\n");
-		AddPendingClient(xuid);
-	}
-	else if ((g_flUniversalTime - pPendingClient->signon_timestamp) < g_flRejoinTimeout)
-	{
-		// Client reconnected within the timeout interval
-		// If they already have the addon this happens almost instantly after receiving the signon message with the addon
-		Msg(" has reconnected within the interval, allowing\n");
-		g_ClientsPendingAddon.FastRemove(index);
-	}
-	else
-	{
-		Msg(" has reconnected after the timeout or did not receive the addon message, will send addon message again\n");
-	}
 
 	RETURN_META_VALUE(MRES_IGNORED, true);
 }
@@ -643,7 +587,9 @@ void CS2Fixes::Hook_ClientPutInServer( CPlayerSlot slot, char const *pszName, in
 void CS2Fixes::Hook_ClientDisconnect( CPlayerSlot slot, ENetworkDisconnectionReason reason, const char *pszName, uint64 xuid, const char *pszNetworkID )
 {
 	Message( "Hook_ClientDisconnect(%d, %d, \"%s\", %lli, \"%s\")\n", slot, reason, pszName, xuid, pszNetworkID );
+	ZEPlayer* pPlayer = g_playerManager->GetPlayer(slot);
 
+	g_pAdminSystem->AddDisconnectedPlayer(pszName, xuid, pPlayer ? pPlayer->GetIpAddress() : "");
 	g_playerManager->OnClientDisconnect(slot);
 }
 
@@ -696,6 +642,8 @@ void CS2Fixes::Hook_GameFrame( bool simulating, bool bFirstTick, bool bLastTick 
 	VPROF_EXIT_SCOPE();
 }
 
+extern bool g_bFlashLightTransmitOthers;
+
 void CS2Fixes::Hook_CheckTransmit(CCheckTransmitInfo **ppInfoList, int infoCount, CBitVec<16384> &unionTransmitEdicts,
 								const Entity2Networkable_t **pNetworkables, const uint16 *pEntityIndicies, int nEntities)
 {
@@ -728,26 +676,31 @@ void CS2Fixes::Hook_CheckTransmit(CCheckTransmitInfo **ppInfoList, int infoCount
 			CCSPlayerController* pController = CCSPlayerController::FromSlot(j);
 
 			// Always transmit to themselves
-			if (!pController || !pController->IsConnected() || j == iPlayerSlot)
+			if (!pController || j == iPlayerSlot)
 				continue;
 
-			CBarnLight *pFlashLight = g_playerManager->GetPlayer(j)->GetFlashLight();
+			// Don't transmit other players' flashlights, except the one they're watching if in spec
+			CBarnLight *pFlashLight = pController->IsConnected() ? g_playerManager->GetPlayer(j)->GetFlashLight() : nullptr;
 
-			// Don't transmit other players' flashlights
-			if (pFlashLight)
+			if (!g_bFlashLightTransmitOthers && pFlashLight &&
+				!(pSelfController->GetPawnState() == STATE_OBSERVER_MODE && pSelfController->GetObserverTarget() == pController->GetPawn()))
+			{
 				pInfo->m_pTransmitEntity->Clear(pFlashLight->entindex());
+			}
 
-			if (!g_bEnableHide)
+			// Always transmit other players if spectating
+			if (!g_bEnableHide || pSelfController->GetPawnState() == STATE_OBSERVER_MODE)
 				continue;
 
-			auto pPawn = pController->m_hPawn.Get();
+			// Get the actual pawn as the player could be currently spectating
+			CCSPlayerPawn *pPawn = pController->GetPlayerPawn();
 
 			if (!pPawn)
 				continue;
 
 			// Hide players marked as hidden or ANY dead player, it seems that a ragdoll of a previously hidden player can crash?
 			// TODO: Revert this if/when valve fixes the issue?
-			if (pSelfZEPlayer->ShouldBlockTransmit(j) || pPawn->m_lifeState != LIFE_ALIVE)
+			if (pSelfZEPlayer->ShouldBlockTransmit(j) || !pPawn->IsAlive())
 				pInfo->m_pTransmitEntity->Clear(pPawn->entindex());
 		}
 	}
@@ -755,7 +708,6 @@ void CS2Fixes::Hook_CheckTransmit(CCheckTransmitInfo **ppInfoList, int infoCount
 	VPROF_EXIT_SCOPE();
 }
 
-// Potentially might not work
 void CS2Fixes::OnLevelInit( char const *pMapName,
 									 char const *pMapEntities,
 									 char const *pOldLevel,
@@ -765,7 +717,19 @@ void CS2Fixes::OnLevelInit( char const *pMapName,
 {
 	Message("OnLevelInit(%s)\n", pMapName);
 
+	// run our cfg
+	g_pEngineServer2->ServerCommand("exec cs2fixes/cs2fixes");
+
+	// Run map cfg (if present)
+	char cmd[MAX_PATH];
+	V_snprintf(cmd, sizeof(cmd), "exec cs2fixes/maps/%s", pMapName);
+	g_pEngineServer2->ServerCommand(cmd);
+
+	g_playerManager->SetupInfiniteAmmo();
 	g_pMapVoteSystem->OnLevelInit(pMapName);
+
+	if (g_bEnableZR)
+		ZR_OnLevelInit();
 }
 
 // Potentially might not work
@@ -791,7 +755,7 @@ const char *CS2Fixes::GetLicense()
 
 const char *CS2Fixes::GetVersion()
 {
-	return "1.4.1";
+	return CS2FIXES_VERSION; // defined by the build script
 }
 
 const char *CS2Fixes::GetDate()

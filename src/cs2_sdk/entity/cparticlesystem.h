@@ -32,4 +32,16 @@ public:
 	SCHEMA_FIELD(CUtlSymbolLarge, m_iszEffectName)
 	SCHEMA_FIELD(int, m_nTintCP)
 	SCHEMA_FIELD_POINTER(Color, m_clrTint)
+	SCHEMA_FIELD_POINTER(CHandle<Z_CBaseEntity>, m_hControlPointEnts) // m_hControlPointEnts[64]
+};
+
+class CEnvParticleGlow : public CParticleSystem
+{
+public:
+	DECLARE_SCHEMA_CLASS(CEnvParticleGlow);
+
+	SCHEMA_FIELD(float, m_flAlphaScale)
+	SCHEMA_FIELD(float, m_flRadiusScale)
+	SCHEMA_FIELD(float, m_flSelfIllumScale)
+	SCHEMA_FIELD_POINTER(Color, m_ColorTint)
 };

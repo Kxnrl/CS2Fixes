@@ -18,6 +18,8 @@
  */
 
 #include "networkbasetypes.pb.h"
+#include "usercmd.pb.h"
+#include "cs_usercmd.pb.h"
 
 #include "cdetour.h"
 #include "common.h"
@@ -53,10 +55,11 @@ extern CGameEntitySystem *g_pEntitySystem;
 extern IGameEventManager2 *g_gameEventManager;
 extern CCSGameRules *g_pGameRules;
 
+CUtlVector<CDetourBase *> g_vecDetours;
+
 DECLARE_DETOUR(UTIL_SayTextFilter, Detour_UTIL_SayTextFilter);
 DECLARE_DETOUR(UTIL_SayText2Filter, Detour_UTIL_SayText2Filter);
 DECLARE_DETOUR(IsHearingClient, Detour_IsHearingClient);
-DECLARE_DETOUR(CSoundEmitterSystem_EmitSound, Detour_CSoundEmitterSystem_EmitSound);
 DECLARE_DETOUR(TriggerPush_Touch, Detour_TriggerPush_Touch);
 DECLARE_DETOUR(CGameRules_Constructor, Detour_CGameRules_Constructor);
 DECLARE_DETOUR(CBaseEntity_TakeDamageOld, Detour_CBaseEntity_TakeDamageOld);
@@ -64,8 +67,9 @@ DECLARE_DETOUR(CCSPlayer_WeaponServices_CanUse, Detour_CCSPlayer_WeaponServices_
 DECLARE_DETOUR(CEntityIdentity_AcceptInput, Detour_CEntityIdentity_AcceptInput);
 DECLARE_DETOUR(CNavMesh_GetNearestNavArea, Detour_CNavMesh_GetNearestNavArea);
 DECLARE_DETOUR(FixLagCompEntityRelationship, Detour_FixLagCompEntityRelationship);
-DECLARE_DETOUR(SendNetMessage, Detour_SendNetMessage);
-DECLARE_DETOUR(HostStateRequest, Detour_HostStateRequest);
+DECLARE_DETOUR(CNetworkStringTable_AddString, Detour_AddString);
+DECLARE_DETOUR(ProcessMovement, Detour_ProcessMovement);
+DECLARE_DETOUR(ProcessUsercmds, Detour_ProcessUsercmds);
 
 void FASTCALL Detour_CGameRules_Constructor(CGameRules *pThis)
 {
@@ -120,8 +124,10 @@ void FASTCALL Detour_CBaseEntity_TakeDamageOld(Z_CBaseEntity *pThis, CTakeDamage
 }
 
 static bool g_bUseOldPush = false;
-
 FAKE_BOOL_CVAR(cs2f_use_old_push, "Whether to use the old CSGO trigger_push behavior", g_bUseOldPush, false, false)
+
+static bool g_bLogPushes = false;
+FAKE_BOOL_CVAR(cs2f_log_pushes, "Whether to log pushes (cs2f_use_old_push must be enabled)", g_bLogPushes, false, false)
 
 void FASTCALL Detour_TriggerPush_Touch(CTriggerPush* pPush, Z_CBaseEntity* pOther)
 {
@@ -183,16 +189,23 @@ void FASTCALL Detour_TriggerPush_Touch(CTriggerPush* pPush, Z_CBaseEntity* pOthe
 		pOther->Teleport(&origin, nullptr, nullptr);
 	}
 
+	if (g_bLogPushes)
+	{
+		Vector vecEntBaseVelocity = pOther->m_vecBaseVelocity;
+		Vector vecOrigPush = vecAbsDir * pPush->m_flSpeed();
+
+		Message("Pushing entity %i | frametime = %.3f | entity basevelocity = %.2f %.2f %.2f | original push velocity = %.2f %.2f %.2f | final push velocity = %.2f %.2f %.2f\n",
+			pOther->GetEntityIndex(),
+			gpGlobals->frametime,
+			vecEntBaseVelocity.x, vecEntBaseVelocity.y, vecEntBaseVelocity.z,
+			vecOrigPush.x, vecOrigPush.y, vecOrigPush.z,
+			vecPush.x, vecPush.y, vecPush.z);
+	}
+
 	pOther->m_vecBaseVelocity(vecPush);
 
 	flags |= (FL_BASEVELOCITY);
 	pOther->m_fFlags(flags);
-}
-
-void FASTCALL Detour_CSoundEmitterSystem_EmitSound(ISoundEmitterSystemBase *pSoundEmitterSystem, CEntityIndex *a2, IRecipientFilter &filter, uint32 a4, void *a5)
-{
-	//ConMsg("Detour_CSoundEmitterSystem_EmitSound\n");
-	CSoundEmitterSystem_EmitSound(pSoundEmitterSystem, a2, filter, a4, a5);
 }
 
 bool FASTCALL Detour_IsHearingClient(void* serverClient, int index)
@@ -337,54 +350,6 @@ void FASTCALL Detour_UTIL_SayText2Filter(
 	UTIL_SayText2Filter(filter, pEntity, eMessageType, msg_name, param1, param2, param3, param4);
 }
 
-void Detour_Log()
-{
-	return;
-}
-
-bool FASTCALL Detour_IsChannelEnabled(LoggingChannelID_t channelID, LoggingSeverity_t severity)
-{
-	return false;
-}
-
-CDetour<decltype(Detour_Log)> g_LoggingDetours[] =
-{
-	CDetour<decltype(Detour_Log)>( Detour_Log, "Msg" ),
-	//CDetour<decltype(Detour_Log)>( Detour_Log, "?ConMsg@@YAXPEBDZZ" ),
-	//CDetour<decltype(Detour_Log)>( Detour_Log, "?ConColorMsg@@YAXAEBVColor@@PEBDZZ" ),
-	CDetour<decltype(Detour_Log)>( Detour_Log, "ConDMsg" ),
-	CDetour<decltype(Detour_Log)>( Detour_Log, "DevMsg" ),
-	CDetour<decltype(Detour_Log)>( Detour_Log, "Warning" ),
-	CDetour<decltype(Detour_Log)>( Detour_Log, "DevWarning" ),
-	//CDetour<decltype(Detour_Log)>( Detour_Log, "?DevWarning@@YAXPEBDZZ" ),
-	CDetour<decltype(Detour_Log)>( Detour_Log, "LoggingSystem_Log" ),
-	CDetour<decltype(Detour_Log)>( Detour_Log, "LoggingSystem_LogDirect" ),
-	CDetour<decltype(Detour_Log)>( Detour_Log, "LoggingSystem_LogAssert" ),
-	//CDetour<decltype(Detour_Log)>( Detour_IsChannelEnabled, "LoggingSystem_IsChannelEnabled" ),
-};
-
-CON_COMMAND_F(toggle_logs, "Toggle printing most logs and warnings", FCVAR_SPONLY | FCVAR_LINKED_CONCOMMAND)
-{
-	static bool bBlock = false;
-
-	if (!bBlock)
-	{
-		Message("Logging is now OFF.\n");
-
-		for (int i = 0; i < sizeof(g_LoggingDetours) / sizeof(*g_LoggingDetours); i++)
-			g_LoggingDetours[i].EnableDetour();
-	}
-	else
-	{
-		Message("Logging is now ON.\n");
-
-		for (int i = 0; i < sizeof(g_LoggingDetours) / sizeof(*g_LoggingDetours); i++)
-			g_LoggingDetours[i].DisableDetour();
-	}
-
-	bBlock = !bBlock;
-}
-
 bool FASTCALL Detour_CCSPlayer_WeaponServices_CanUse(CCSPlayer_WeaponServices *pWeaponServices, CBasePlayerWeapon* pPlayerWeapon)
 {
 	if (g_bEnableZR && !ZR_Detour_CCSPlayer_WeaponServices_CanUse(pWeaponServices, pPlayerWeapon))
@@ -400,7 +365,8 @@ bool FASTCALL Detour_CEntityIdentity_AcceptInput(CEntityIdentity* pThis, CUtlSym
 	if (g_bEnableZR)
 		ZR_Detour_CEntityIdentity_AcceptInput(pThis, pInputName, pActivator, pCaller, value, nOutputID);
 
-    if (!V_strcasecmp(pInputName->String(), "KeyValues"))
+	// Handle KeyValue(s)
+    if (!V_strnicmp(pInputName->String(), "KeyValue", 8))
     {
         if ((value->m_type == FIELD_CSTRING || value->m_type == FIELD_STRING) && value->m_pszString)
         {
@@ -410,6 +376,20 @@ bool FASTCALL Detour_CEntityIdentity_AcceptInput(CEntityIdentity* pThis, CUtlSym
         Message("Invalid value type for input %s\n", pInputName->String());
         return false;
     }
+	else if (!V_strnicmp(pInputName->String(), "IgniteL", 7)) // Override IgniteLifetime
+	{
+		float flDuration = 0.f;
+
+		if ((value->m_type == FIELD_CSTRING || value->m_type == FIELD_STRING) && value->m_pszString)
+			flDuration = V_StringToFloat32(value->m_pszString, 0.f);
+		else
+			flDuration = value->m_float;
+
+		CCSPlayerPawn *pPawn = (CCSPlayerPawn*)pThis->m_pInstance;
+
+		if (pPawn->IsPawn() && IgnitePawn(pPawn, flDuration, pPawn, pPawn))
+			return true;
+	}
 
 	return CEntityIdentity_AcceptInput(pThis, pInputName, pActivator, pCaller, value, nOutputID);
 }
@@ -438,116 +418,95 @@ void FASTCALL Detour_FixLagCompEntityRelationship(void *a1, CEntityInstance *pEn
 	return FixLagCompEntityRelationship(a1, pEntity, a3);
 }
 
-std::string g_sExtraAddon;
-FAKE_STRING_CVAR(cs2f_extra_addon, "The workshop ID of an extra addon to mount and send to clients", g_sExtraAddon, false);
+bool g_bBlockEntityStrings = false;
+FAKE_BOOL_CVAR(cs2f_block_entity_strings, "Whether to block adding entries in the EntityNames stringtable", g_bBlockEntityStrings, false, false);
 
-void *FASTCALL Detour_HostStateRequest(void *a1, void **pRequest)
+int64 FASTCALL Detour_AddString(void *pStringTable, bool bServer, const char *pszString, void *a4)
 {
-	// skip if we're doing anything other than changelevel
-	if (g_sExtraAddon.empty() || V_strnicmp((char *)pRequest[2], "changelevel", 11))
-		return HostStateRequest(a1, pRequest);
+	if (!g_bBlockEntityStrings)
+		return CNetworkStringTable_AddString(pStringTable, bServer, pszString, a4);
 
-	// This offset hasn't changed in 6 years so it should be safe
-	CUtlString *sAddonString = (CUtlString*)(pRequest + 11);
+	static int offset = g_GameConfig->GetOffset("CNetworkStringTable_GetTableName");
+	const char *pszStringTableName = CALL_VIRTUAL(const char *, offset, pStringTable);
 
-	// addons are simply comma-delimited, can have any number of them
-	if (!sAddonString->IsEmpty())
-		sAddonString->Format("%s,%s", sAddonString->Get(), g_sExtraAddon.c_str());
-	else
-		sAddonString->Set(g_sExtraAddon.c_str());
+	// The whole name is "EntityNames" so do the bare minimum comparison, since no other table starts with "Ent"
+	if (!V_strncmp(pszStringTableName, "Ent", 3))
+		return -1;
 
-	return HostStateRequest(a1, pRequest);
+	return CNetworkStringTable_AddString(pStringTable, bServer, pszString, a4);
 }
 
-extern double g_flUniversalTime;
-
-void FASTCALL Detour_SendNetMessage(INetChannel *pNetChan, INetworkSerializable *pNetMessage, void *pData, int a4)
+void FASTCALL Detour_ProcessMovement(CCSPlayer_MovementServices *pThis, void *pMove)
 {
-	NetMessageInfo_t *info = pNetMessage->GetNetMessageInfo();
+	CCSPlayerPawn *pPawn = pThis->GetPawn();
 
-	// 7 for signon messages
-	if (info->m_MessageId != 7 || g_sExtraAddon.empty())
-		return SendNetMessage(pNetChan, pNetMessage, pData, a4);
+	if (!pPawn->IsAlive())
+		return ProcessMovement(pThis, pMove);
 
-	ClientJoinInfo_t *pPendingClient = GetPendingClient(pNetChan);
+	CCSPlayerController *pController = pPawn->GetOriginalController();
 
-	if (pPendingClient)
+	if (!pController || !pController->IsConnected())
+		return ProcessMovement(pThis, pMove);
+
+	float flSpeedMod = pController->GetZEPlayer()->GetSpeedMod();
+
+	if (flSpeedMod == 1.f)
+		return ProcessMovement(pThis, pMove);
+
+
+	// Yes, this is what source1 does to scale player speed
+	// Scale frametime during the entire movement processing step and revert right after
+	float flStoreFrametime = gpGlobals->frametime;
+
+	gpGlobals->frametime *= flSpeedMod;
+
+	ProcessMovement(pThis, pMove);
+
+	gpGlobals->frametime = flStoreFrametime;
+}
+
+static bool g_bDisableSubtick = false;
+FAKE_BOOL_CVAR(cs2f_disable_subtick_move, "Whether to disable subtick movement", g_bDisableSubtick, false, false)
+
+class CUserCmd
+{
+public:
+	CSGOUserCmdPB cmd;
+	[[maybe_unused]] char pad1[0x38];
+#ifdef PLATFORM_WINDOWS
+	[[maybe_unused]] char pad2[0x8];
+#endif
+};
+
+void* FASTCALL Detour_ProcessUsercmds(CBasePlayerPawn *pPawn, CUserCmd *cmds, int numcmds, bool paused, float margin)
+{
+	if (!g_bDisableSubtick)
+		return ProcessUsercmds(pPawn, cmds, numcmds, paused, margin);
+
+	static int offset = g_GameConfig->GetOffset("UsercmdOffset");
+
+	for (int i = 0; i < numcmds; i++)
 	{
-		Message("Detour_SendNetMessage: Sending addon %s to client %lli\n", g_sExtraAddon.c_str(), pPendingClient->steamid);
-		CNETMsg_SignonState *pMsg = (CNETMsg_SignonState *)pData;
-		pMsg->set_addons(g_sExtraAddon.c_str());
-		pMsg->set_signon_state(SIGNONSTATE_CHANGELEVEL);
-		pPendingClient->signon_timestamp = g_flUniversalTime;
+		CSGOUserCmdPB *pUserCmd = &cmds[i].cmd;
+
+		for (int j = 0; j < pUserCmd->mutable_base()->subtick_moves_size(); j++)
+			pUserCmd->mutable_base()->mutable_subtick_moves(j)->set_when(0.f);
 	}
 
-	SendNetMessage(pNetChan, pNetMessage, pData, a4);
+	return ProcessUsercmds(pPawn, cmds, numcmds, paused, margin);
 }
-
-CUtlVector<CDetourBase *> g_vecDetours;
 
 bool InitDetours(CGameConfig *gameConfig)
 {
 	bool success = true;
 
-	g_vecDetours.PurgeAndDeleteElements();
-
-	for (int i = 0; i < sizeof(g_LoggingDetours) / sizeof(*g_LoggingDetours); i++)
+	FOR_EACH_VEC(g_vecDetours, i)
 	{
-		if (!g_LoggingDetours[i].CreateDetour(gameConfig))
+		if (!g_vecDetours[i]->CreateDetour(gameConfig))
 			success = false;
+		
+		g_vecDetours[i]->EnableDetour();
 	}
-
-	if (!UTIL_SayTextFilter.CreateDetour(gameConfig))
-		success = false;
-	UTIL_SayTextFilter.EnableDetour();
-
-	if (!UTIL_SayText2Filter.CreateDetour(gameConfig))
-		success = false;
-	UTIL_SayText2Filter.EnableDetour();
-
-	if (!IsHearingClient.CreateDetour(gameConfig))
-		success = false;
-	IsHearingClient.EnableDetour();
-
-	if (!CSoundEmitterSystem_EmitSound.CreateDetour(gameConfig))
-		success = false;
-	CSoundEmitterSystem_EmitSound.EnableDetour();
-
-	if (!TriggerPush_Touch.CreateDetour(gameConfig))
-		success = false;
-	TriggerPush_Touch.EnableDetour();
-
-	if (!CGameRules_Constructor.CreateDetour(gameConfig))
-		success = false;
-	CGameRules_Constructor.EnableDetour();
-
-	if (!CBaseEntity_TakeDamageOld.CreateDetour(gameConfig))
-		success = false;
-	CBaseEntity_TakeDamageOld.EnableDetour();
-
-	if (!CCSPlayer_WeaponServices_CanUse.CreateDetour(gameConfig))
-		success = false;
-	CCSPlayer_WeaponServices_CanUse.EnableDetour();
-  
-	if (!CEntityIdentity_AcceptInput.CreateDetour(gameConfig))
-		success = false;
-	CEntityIdentity_AcceptInput.EnableDetour();
-
-	if (!CNavMesh_GetNearestNavArea.CreateDetour(gameConfig))
-		success = false;
-	CNavMesh_GetNearestNavArea.EnableDetour();
-
-	if (!FixLagCompEntityRelationship.CreateDetour(gameConfig))
-		success = false;
-	FixLagCompEntityRelationship.EnableDetour();
-
-	if (!SendNetMessage.CreateDetour(gameConfig))
-		success = false;
-	SendNetMessage.EnableDetour();
-
-	if (!HostStateRequest.CreateDetour(gameConfig))
-		success = false;
-	HostStateRequest.EnableDetour();
 
 	return success;
 }

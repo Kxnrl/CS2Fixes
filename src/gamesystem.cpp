@@ -24,6 +24,8 @@
 #include "zombiereborn.h"
 #include "adminsystem.h"
 
+#include "tier0/memdbgon.h"
+
 extern CGameConfig *g_GameConfig;
 
 CBaseGameSystemFactory **CBaseGameSystemFactory::sm_pFirst = nullptr;
@@ -58,6 +60,8 @@ bool InitGameSystems()
 	return true;
 }
 
+extern std::string g_sBurnParticle;
+
 GS_EVENT_MEMBER(CGameSystem, BuildGameSessionManifest)
 {
 	Message("CGameSystem::BuildGameSessionManifest\n");
@@ -70,6 +74,8 @@ GS_EVENT_MEMBER(CGameSystem, BuildGameSessionManifest)
 
 	ZR_Precache(pResourceManifest);
 	PrecacheAdminBeaconParticle(pResourceManifest);
+
+	pResourceManifest->AddResource(g_sBurnParticle.c_str());
 }
 
 // Called every frame before entities think
@@ -77,4 +83,10 @@ GS_EVENT_MEMBER(CGameSystem, ServerPreEntityThink)
 {
 	// This could've gone into CS2Fixes::Hook_GameFrame but I've kept it here as an example
 	g_playerManager->FlashLightThink();
+}
+
+// Called every frame after entities think
+GS_EVENT_MEMBER(CGameSystem, ServerPostEntityThink)
+{
+	g_playerManager->UpdatePlayerStates();
 }

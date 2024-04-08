@@ -29,18 +29,9 @@
 #define DECAL_PREF_KEY_NAME "hide_decals"
 #define HIDE_DISTANCE_PREF_KEY_NAME "hide_distance"
 #define SOUND_STATUS_PREF_KEY_NAME "sound_status"
+#define INVALID_ZEPLAYERHANDLE_INDEX 0u
 
-struct ClientJoinInfo_t
-{
-	uint64 steamid;
-	double signon_timestamp;
-};
-
-extern CUtlVector<ClientJoinInfo_t> g_ClientsPendingAddon;
-
-void AddPendingClient(uint64 steamid);
-ClientJoinInfo_t *GetPendingClient(uint64 steamid, int &index);
-ClientJoinInfo_t *GetPendingClient(INetChannel *pNetChan);
+static uint32 iZEPlayerHandleSerial = 0u; // this should actually be 3 bytes large, but no way enough players join in servers lifespan for this to be an issue
 
 enum class ETargetType {
 	NONE,
@@ -55,10 +46,49 @@ enum class ETargetType {
 	CT,
 };
 
+class ZEPlayer;
+
+class ZEPlayerHandle
+{
+public:
+	ZEPlayerHandle();
+	ZEPlayerHandle(CPlayerSlot slot); // used for initialization inside ZEPlayer constructor
+	ZEPlayerHandle(const ZEPlayerHandle& other);
+	ZEPlayerHandle(ZEPlayer *pZEPlayer);
+
+	bool IsValid() const { return static_cast<bool>(Get()); }
+
+	uint32 GetIndex() const { return m_Index; }
+	uint32 GetPlayerSlot() const { return m_Parts.m_PlayerSlot; }
+	uint32 GetSerial() const { return m_Parts.m_Serial; }
+
+	bool operator==(const ZEPlayerHandle &other) const { return other.m_Index == m_Index; }
+	bool operator!=(const ZEPlayerHandle &other) const { return other.m_Index != m_Index; }
+	bool operator==(ZEPlayer *pZEPlayer) const;
+	bool operator!=(ZEPlayer *pZEPlayer) const;
+
+	void operator=(const ZEPlayerHandle &other) { m_Index = other.m_Index; }
+	void operator=(ZEPlayer *pZEPlayer) { Set(pZEPlayer); }
+	void Set(ZEPlayer *pZEPlayer);
+	
+	ZEPlayer *Get() const;
+
+private:
+	union
+	{
+		uint32 m_Index;
+		struct
+		{
+			uint32 m_PlayerSlot : 6;
+			uint32 m_Serial : 26;
+		} m_Parts;
+	};
+};
+
 class ZEPlayer
 {
 public:
-	ZEPlayer(CPlayerSlot slot, bool m_bFakeClient = false): m_slot(slot), m_bFakeClient(m_bFakeClient)
+	ZEPlayer(CPlayerSlot slot, bool m_bFakeClient = false): m_slot(slot), m_bFakeClient(m_bFakeClient), m_Handle(slot)
 	{ 
 		m_bAuthenticated = false;
 		m_iAdminFlags = 0;
@@ -80,6 +110,8 @@ public:
 		m_bInGame = false;
 		m_iMZImmunity = 0; // out of 100
 		m_flNominateTime = -60.0f;
+		m_iPlayerState = 1; // STATE_WELCOME is the initial state
+		m_flSpeedMod = 1.f;
 	}
 
 	~ZEPlayer()
@@ -126,6 +158,8 @@ public:
 	void SetNominateTime(float flCurtime) { m_flNominateTime = flCurtime; }
 	void SetFlashLight(CBarnLight *pLight) { m_hFlashLight.Set(pLight); }
 	void SetBeaconParticle(CParticleSystem *pParticle) { m_hBeaconParticle.Set(pParticle); }
+	void SetPlayerState(uint32 iPlayerState) { m_iPlayerState = iPlayerState; }
+	void SetSpeedMod(float flSpeedMod) { m_flSpeedMod = flSpeedMod; }
 
 	bool IsMuted() { return m_bMuted; }
 	bool IsGagged() { return m_bGagged; }
@@ -146,6 +180,9 @@ public:
 	float GetNominateTime() { return m_flNominateTime; }
 	CBarnLight *GetFlashLight() { return m_hFlashLight.Get(); }
 	CParticleSystem *GetBeaconParticle() { return m_hBeaconParticle.Get(); }
+	ZEPlayerHandle GetHandle() { return m_Handle; }
+	uint32 GetPlayerState() { return m_iPlayerState; }
+	float GetSpeedMod() { return m_flSpeedMod; }
 	
 	void OnAuthenticated();
 	void CheckAdmin();
@@ -158,10 +195,10 @@ private:
 	bool m_bConnected;
 	const CSteamID* m_UnauthenticatedSteamID;
 	const CSteamID* m_SteamID;
+	CPlayerSlot m_slot;
 	bool m_bFakeClient;
 	bool m_bMuted;
 	bool m_bGagged;
-	CPlayerSlot m_slot;
 	uint64 m_iAdminFlags;
 	int m_iHideDistance;
 	CBitVec<MAXPLAYERS> m_shouldTransmit;
@@ -181,6 +218,9 @@ private:
 	float m_flNominateTime;
 	CHandle<CBarnLight> m_hFlashLight;
 	CHandle<CParticleSystem> m_hBeaconParticle;
+	ZEPlayerHandle m_Handle;
+	uint32 m_iPlayerState;
+	float m_flSpeedMod;
 };
 
 class CPlayerManager
@@ -227,6 +267,8 @@ public:
 	bool IsPlayerUsingStopSound(int slot) { return m_nUsingStopSound & ((uint64)1 << slot); }
 	bool IsPlayerUsingSilenceSound(int slot) { return m_nUsingSilenceSound & ((uint64)1 << slot); }
 	bool IsPlayerUsingStopDecals(int slot) { return m_nUsingStopDecals & ((uint64)1 << slot); }
+
+	void UpdatePlayerStates();
 
 private:
 	ZEPlayer *m_vecPlayers[MAXPLAYERS];
