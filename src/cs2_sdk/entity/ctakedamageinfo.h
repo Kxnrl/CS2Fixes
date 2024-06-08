@@ -67,6 +67,12 @@ enum TakeDamageFlags_t : uint32_t
 	DFLAG_IGNORE_ARMOR = 0x800,
 };
 
+// No idea what this is meant to have, but OnTakeDamage_Alive expects this and we only care about pInfo
+struct CTakeDamageInfoContainer
+{
+	CTakeDamageInfo *pInfo;
+};
+
 class CTakeDamageInfo
 {
 private:
@@ -78,7 +84,7 @@ public:
 		addresses::CTakeDamageInfo_Constructor(this, nullptr, nullptr, nullptr, &vec3_origin, &vec3_origin, 0.f, 0, 0, nullptr);
 	}
 
-	CTakeDamageInfo(Z_CBaseEntity *pInflictor, Z_CBaseEntity *pAttacker, Z_CBaseEntity *pAbility, float flDamage, DamageTypes_t bitsDamageType)
+	CTakeDamageInfo(CBaseEntity *pInflictor, CBaseEntity *pAttacker, CBaseEntity *pAbility, float flDamage, DamageTypes_t bitsDamageType)
 	{
 		addresses::CTakeDamageInfo_Constructor(this, pInflictor, pAttacker, pAbility, &vec3_origin, &vec3_origin, flDamage, bitsDamageType, 0, nullptr);
 	}
@@ -87,10 +93,11 @@ public:
 	Vector m_vecDamagePosition;
 	Vector m_vecReportedPosition;
 	Vector m_vecDamageDirection;
-	CHandle<Z_CBaseEntity> m_hInflictor;
-	CHandle<Z_CBaseEntity> m_hAttacker;
-	CHandle<Z_CBaseEntity> m_hAbility;
+	CHandle<CBaseEntity> m_hInflictor;
+	CHandle<CBaseEntity> m_hAttacker;
+	CHandle<CBaseEntity> m_hAbility;
 	float m_flDamage;
+	float m_flTotalledDamage;
 	DamageTypes_t m_bitsDamageType;
 	int32_t m_iDamageCustom;
 	uint8_t m_iAmmoType;
@@ -116,4 +123,7 @@ private:
 
 public:
 	bool m_bInTakeDamageFlow;
+
+private:
+	[[maybe_unused]] uint8_t __pad009d[0x8];
 };

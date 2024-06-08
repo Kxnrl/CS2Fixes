@@ -31,8 +31,8 @@
 class InputData_t
 {
 public:
-    Z_CBaseEntity* pActivator;
-    Z_CBaseEntity* pCaller;
+    CBaseEntity* pActivator;
+    CBaseEntity* pCaller;
     variant_t      value;
     int            nOutputID;
 };
@@ -50,12 +50,12 @@ inline bool StripPlayer(CCSPlayerPawn* pPawn)
 }
 
 // Must be called in GameFramePre
-inline void DelayInput(Z_CBaseEntity* pCaller, const char* input, const char* param = "")
+inline void DelayInput(CBaseEntity* pCaller, const char* input, const char* param = "")
 {
     const auto eh = pCaller->GetHandle();
 
-    new CTimer(0.f, false, [eh, input, param]() {
-        if (const auto entity = reinterpret_cast<Z_CBaseEntity*>(eh.Get()))
+    new CTimer(0.f, false, false, [eh, input, param]() {
+        if (const auto entity = reinterpret_cast<CBaseEntity*>(eh.Get()))
             entity->AcceptInput(input, param, nullptr, entity);
 
         return -1.f;
@@ -63,14 +63,14 @@ inline void DelayInput(Z_CBaseEntity* pCaller, const char* input, const char* pa
 }
 
 // Must be called in GameFramePre
-inline void DelayInput(Z_CBaseEntity* pCaller, Z_CBaseEntity* pActivator, const char* input, const char* param = "")
+inline void DelayInput(CBaseEntity* pCaller, CBaseEntity* pActivator, const char* input, const char* param = "")
 {
     const auto eh = pCaller->GetHandle();
     const auto ph = pActivator->GetHandle();
 
-    new CTimer(0.f, false, [eh, ph, input, param]() {
-        const auto player = reinterpret_cast<Z_CBaseEntity*>(ph.Get());
-        if (const auto entity = reinterpret_cast<Z_CBaseEntity*>(eh.Get()))
+    new CTimer(0.f, false, false, [eh, ph, input, param]() {
+        const auto player = reinterpret_cast<CBaseEntity*>(ph.Get());
+        if (const auto entity = reinterpret_cast<CBaseEntity*>(eh.Get()))
             entity->AcceptInput(input, param, player, entity);
 
         return -1.f;
@@ -121,13 +121,13 @@ void TriggerForAllPlayers(CGamePlayerEquip* pEntity, InputData_t* pInput)
     }
 }
 
-void TriggerForActivatedPlayer(CGamePlayerEquip* pEntity, InputData_t* pInput)
+bool TriggerForActivatedPlayer(CGamePlayerEquip* pEntity, InputData_t* pInput)
 {
     const auto pCaller   = pInput->pActivator;
     const auto pszWeapon = ((pInput->value.m_type == FIELD_CSTRING || pInput->value.m_type == FIELD_STRING) && pInput->value.m_pszString) ? pInput->value.m_pszString : nullptr;
 
-    if (!pCaller || !pszWeapon || !pCaller->IsPawn())
-        return;
+    if (!pCaller || !pCaller->IsPawn())
+        return true;
 
     const auto pPawn = reinterpret_cast<CCSPlayerPawn*>(pCaller);
     const auto flags = pEntity->m_spawnflags();
@@ -135,7 +135,7 @@ void TriggerForActivatedPlayer(CGamePlayerEquip* pEntity, InputData_t* pInput)
     if (flags & CGamePlayerEquip::SF_PLAYEREQUIP_STRIPFIRST)
     {
         if (!StripPlayer(pPawn))
-            return;
+            return true;
     }
     else if (flags & CGamePlayerEquip::SF_PLAYEREQUIP_ONLYSTRIPSAME)
     {
@@ -145,9 +145,16 @@ void TriggerForActivatedPlayer(CGamePlayerEquip* pEntity, InputData_t* pInput)
     const auto pItemServices = pPawn->m_pItemServices();
 
     if (!pItemServices)
-        return;
+        return true;
 
-    pItemServices->GiveNamedItem(pszWeapon);
+    if (pszWeapon && V_strcmp(pszWeapon, "(null)"))
+    {
+        pItemServices->GiveNamedItem(pszWeapon);
+        // Don't execute game function (we fixed string param)
+        return false;
+    }
+
+    return true;
 }
 } // namespace CGamePlayerEquipHandler
 
@@ -305,7 +312,7 @@ void RunThink(int tick)
     }
 }
 
-bool OnActivate(CGameUI* pEntity, Z_CBaseEntity* pActivator)
+bool OnActivate(CGameUI* pEntity, CBaseEntity* pActivator)
 {
     if (!pActivator || !pActivator->IsPawn())
         return false;
@@ -333,7 +340,7 @@ bool OnActivate(CGameUI* pEntity, Z_CBaseEntity* pActivator)
     return true;
 }
 
-bool OnDeactivate(CGameUI* pEntity, Z_CBaseEntity* pActivator)
+bool OnDeactivate(CGameUI* pEntity, CBaseEntity* pActivator)
 {
     const CBaseHandle handle = CHandle(pEntity);
     const auto        key    = static_cast<uint>(handle.ToInt());

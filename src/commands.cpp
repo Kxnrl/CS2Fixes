@@ -37,6 +37,7 @@
 #include "httpmanager.h"
 #include "discord.h"
 #include "zombiereborn.h"
+#include "tier0/vprof.h"
 #undef snprintf
 #include "vendor/nlohmann/json.hpp"
 
@@ -103,6 +104,8 @@ void ParseWeaponCommand(const CCommand& args, CCSPlayerController* player)
 	if (!g_bEnableWeapons || !player || !player->m_hPawn())
 		return;
 
+	VPROF("ParseWeaponCommand");
+
 	CCSPlayerPawn* pPawn = (CCSPlayerPawn*)player->GetPawn();
 	WeaponMapEntry_t weaponEntry;
 	bool foundWeapon = false;
@@ -138,7 +141,7 @@ void ParseWeaponCommand(const CCommand& args, CCSPlayerController* player)
 	}
 
 	CCSPlayer_ItemServices* pItemServices = pPawn->m_pItemServices;
-	CPlayer_WeaponServices* pWeaponServices = pPawn->m_pWeaponServices;
+	CCSPlayer_WeaponServices* pWeaponServices = pPawn->m_pWeaponServices;
 
 	// it can sometimes be null when player joined on the very first round? 
 	if (!pItemServices || !pWeaponServices)
@@ -187,22 +190,14 @@ void ParseWeaponCommand(const CCommand& args, CCSPlayerController* player)
 
 	FOR_EACH_VEC(*weapons, i)
 	{
-		CHandle<CBasePlayerWeapon>& weaponHandle = (*weapons)[i];
-
-		if (!weaponHandle.IsValid())
-			continue;
-
-		CBasePlayerWeapon* weapon = weaponHandle.Get();
+		CBasePlayerWeapon* weapon = (*weapons)[i].Get();
 
 		if (!weapon)
 			continue;
 
 		if (weapon->GetWeaponVData()->m_GearSlot() == weaponEntry.iGearSlot && (weaponEntry.iGearSlot == GEAR_SLOT_RIFLE || weaponEntry.iGearSlot == GEAR_SLOT_PISTOL))
 		{
-			// Despite having to pass a weapon into DropPlayerWeapon, it only drops the weapon if it's also the players active weapon
-			pWeaponServices->m_hActiveWeapon = weaponHandle;
-			pItemServices->DropPlayerWeapon(weapon);
-
+			pWeaponServices->DropWeapon(weapon);
 			break;
 		}
 	}
@@ -216,7 +211,7 @@ void WeaponCommandCallback(const CCommandContext& context, const CCommand& args)
 {
 	CCSPlayerController* pController = nullptr;
 	if (context.GetPlayerSlot().Get() != -1)
-		pController = (CCSPlayerController*)g_pEntitySystem->GetBaseEntity((CEntityIndex)(context.GetPlayerSlot().Get() + 1));
+		pController = (CCSPlayerController*)g_pEntitySystem->GetEntityInstance((CEntityIndex)(context.GetPlayerSlot().Get() + 1));
 
 	// Only allow connected players to run chat commands
 	if (pController && !pController->IsConnected())
@@ -249,10 +244,16 @@ void ParseChatCommand(const char *pMessage, CCSPlayerController *pController)
 	if (!pController || !pController->IsConnected())
 		return;
 
+	VPROF("ParseChatCommand");
+
 	CCommand args;
 	args.Tokenize(pMessage);
+	std::string name = args[0];
 
-	uint16 index = g_CommandList.Find(hash_32_fnv1a_const(args[0]));
+	for (int i = 0; name[i]; i++)
+		name[i] = tolower(name[i]);
+
+	uint16 index = g_CommandList.Find(hash_32_fnv1a_const(name.c_str()));
 
 	if (g_CommandList.IsValidIndex(index))
 	{
@@ -557,7 +558,7 @@ CON_COMMAND_CHAT(sethealth, "<health> - set your health")
 
 	int health = atoi(args[1]);
 
-	Z_CBaseEntity *pEnt = (Z_CBaseEntity *)player->GetPawn();
+	CBaseEntity *pEnt = (CBaseEntity *)player->GetPawn();
 
 	pEnt->m_iHealth = health;
 
@@ -661,7 +662,7 @@ CON_COMMAND_CHAT(dispatch_particle, "test")
 	CRecipientFilter filter;
 	filter.AddAllPlayers();
 
-	addresses::DispatchParticleEffect(args[1], PATTACH_POINT_FOLLOW, player->GetPawn(), 0, "", false, 0, &filter, 0);
+	player->GetPawn()->DispatchParticle(args[1], &filter);
 }
 
 CON_COMMAND_CHAT(emitsound, "emit a sound from the entity under crosshair")
@@ -669,7 +670,7 @@ CON_COMMAND_CHAT(emitsound, "emit a sound from the entity under crosshair")
 	if (!player)
 		return;
 
-	Z_CBaseEntity *pEntity = UTIL_FindPickerEntity(player);
+	CBaseEntity *pEntity = UTIL_FindPickerEntity(player);
 
 	if (!pEntity)
 	{

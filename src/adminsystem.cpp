@@ -17,11 +17,11 @@
  * this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include "usermessages.pb.h"
 
 #include "adminsystem.h"
 #include "KeyValues.h"
 #include "interfaces/interfaces.h"
+#include "filesystem.h"
 #include "icvar.h"
 #include "playermanager.h"
 #include "commands.h"
@@ -33,6 +33,8 @@
 #include "entity/cparticlesystem.h"
 #include "entity/cgamerules.h"
 #include "gamesystem.h"
+#include "votemanager.h"
+#include "map_votes.h"
 #include <vector>
 
 extern IVEngineServer2 *g_pEngineServer2;
@@ -43,10 +45,6 @@ extern CCSGameRules *g_pGameRules;
 CAdminSystem* g_pAdminSystem = nullptr;
 
 CUtlMap<uint32, CChatCommand *> g_CommandList(0, 0, DefLessFunc(uint32));
-
-static std::string g_sBeaconParticle = "particles/testsystems/test_cross_product.vpcf";
-
-FAKE_STRING_CVAR(cs2f_admin_beacon_particle, ".vpcf file to be precached and used for admin beacon", g_sBeaconParticle, false)
 
 void PrintSingleAdminAction(const char* pszAdminName, const char* pszTargetName, const char* pszAction, const char* pszAction2 = "", const char* prefix = CHAT_PREFIX)
 {
@@ -170,6 +168,30 @@ CON_COMMAND_CHAT_FLAGS(ban, "<name> <minutes|0 (permament)> - ban a player", ADM
 		PrintSingleAdminAction(pszCommandPlayerName, pTarget->GetPlayerName(), "banned", (" for " + FormatTime(iDuration, false)).c_str());
 	else
 		PrintSingleAdminAction(pszCommandPlayerName, pTarget->GetPlayerName(), "permanently banned");
+}
+
+CON_COMMAND_CHAT_FLAGS(unban, "<steamid64> - unbans a player. Takes decimal STEAMID64", ADMFLAG_BAN)
+{
+	if (args.ArgC() < 2)
+	{
+		ClientPrint(player, HUD_PRINTTALK, CHAT_PREFIX "Usage: !unban <steamid64>");
+		return;
+	}
+
+	uint64 iTargetSteamId64 = V_StringToUint64(args[1], 0);
+
+	bool bResult = g_pAdminSystem->FindAndRemoveInfractionSteamId64(iTargetSteamId64, CInfractionBase::Ban);
+
+	if (!bResult)
+	{
+		ClientPrint(player, HUD_PRINTTALK, CHAT_PREFIX "Couldn't find user with STEAMID64 <%llu> in ban infractions.", iTargetSteamId64);
+		return;		
+	}
+
+	g_pAdminSystem->SaveInfractions();
+
+	// no need to broadcast this
+	ClientPrint(player, HUD_PRINTTALK, CHAT_PREFIX "User with STEAMID64 <%llu> has been unbanned.", iTargetSteamId64);
 }
 
 CON_COMMAND_CHAT_FLAGS(mute, "<name> <duration|0 (permament)> - mutes a player", ADMFLAG_CHAT)
@@ -557,7 +579,7 @@ CON_COMMAND_CHAT_FLAGS(slap, "<name> [damage] - slap a player", ADMFLAG_SLAY)
 
 	for (int i = 0; i < iNumClients; i++)
 	{
-		CBasePlayerController *pTarget = (CBasePlayerController *)g_pEntitySystem->GetBaseEntity((CEntityIndex)(pSlots[i] + 1));
+		CBasePlayerController *pTarget = (CBasePlayerController *)g_pEntitySystem->GetEntityInstance((CEntityIndex)(pSlots[i] + 1));
 
 		if (!pTarget)
 			continue;
@@ -579,7 +601,7 @@ CON_COMMAND_CHAT_FLAGS(slap, "<name> [damage] - slap a player", ADMFLAG_SLAY)
 		if (flDamage > 0)
 		{
 			// Default to the world
-			Z_CBaseEntity *pAttacker = (Z_CBaseEntity*)g_pEntitySystem->GetBaseEntity(CEntityIndex(0));
+			CBaseEntity *pAttacker = (CBaseEntity*)g_pEntitySystem->GetEntityInstance(CEntityIndex(0));
 
 			if (player)
 				pAttacker = player->GetPlayerPawn();
@@ -793,7 +815,7 @@ CON_COMMAND_CHAT_FLAGS(entfire, "<name> <input> [parameter] - fire outputs at en
 
 	int iFoundEnts = 0;
 
-	Z_CBaseEntity *pTarget = nullptr;
+	CBaseEntity *pTarget = nullptr;
 
 	// The idea here is to only use one of the targeting modes at once, prioritizing !picker then targetname/!self then classname
 	// Try picker first, FindEntityByName can also take !picker but it always uses player 0 so we have to do this ourselves
@@ -936,16 +958,42 @@ CON_COMMAND_CHAT_FLAGS(map, "<mapname> - change map", ADMFLAG_CHANGEMAP)
 		return;
 	}
 
-	if (!g_pEngineServer2->IsMapValid(args[1]))
+	std::string sMapName = args[1];
+
+	for (int i = 0; sMapName[i]; i++)
 	{
-		// This might be a workshop map, and right now there's no easy way to get the list from a collection
-		// So blindly attempt the change for now, as the command does nothing if the map isn't found
-		std::string sCommand = "ds_workshop_changelevel " + std::string(args[1]);
+		// Injection prevention, because we may pass user input to ServerCommand
+		if (sMapName[i] == ';')
+			return;
 
-		ClientPrint(player, HUD_PRINTTALK, CHAT_PREFIX "Attempting a map change to %s from the workshop collection...", args[1]);
-		ClientPrintAll(HUD_PRINTTALK, CHAT_PREFIX "Changing map to %s...", args[1]);
+		sMapName[i] = tolower(sMapName[i]);
+	}
 
-		new CTimer(5.0f, false, [sCommand]()
+	const char* pszMapName = sMapName.c_str();
+
+	if (!g_pEngineServer2->IsMapValid(pszMapName))
+	{
+		std::string sCommand;
+
+		// Check if input is numeric (workshop ID)
+		// Not safe to expose until crashing on failed workshop addon downloads is fixed
+		/*if (V_StringToUint64(pszMapName, 0) != 0)
+		{
+			sCommand = "host_workshop_map " + sMapName;
+		}*/
+		if (g_bVoteManagerEnable && g_pMapVoteSystem->GetMapIndexFromSubstring(pszMapName) != -1)
+		{
+			sCommand = "host_workshop_map " + std::to_string(g_pMapVoteSystem->GetMapWorkshopId(g_pMapVoteSystem->GetMapIndexFromSubstring(pszMapName)));
+		}
+		else
+		{
+			ClientPrint(player, HUD_PRINTTALK, CHAT_PREFIX "Failed to find a map matching %s.", pszMapName);
+			return;
+		}
+
+		ClientPrintAll(HUD_PRINTTALK, CHAT_PREFIX "Changing map to %s...", pszMapName);
+
+		new CTimer(5.0f, false, true, [sCommand]()
 		{
 			g_pEngineServer2->ServerCommand(sCommand.c_str());
 			return -1.0f;
@@ -954,15 +1002,11 @@ CON_COMMAND_CHAT_FLAGS(map, "<mapname> - change map", ADMFLAG_CHANGEMAP)
 		return;
 	}
 
-	// Copy the string, since we're passing this into a timer
-	char szMapName[MAX_PATH];
-	V_strncpy(szMapName, args[1], sizeof(szMapName));
+	ClientPrintAll(HUD_PRINTTALK, CHAT_PREFIX "Changing map to %s...", pszMapName);
 
-	ClientPrintAll(HUD_PRINTTALK, CHAT_PREFIX "Changing map to %s...", szMapName);
-
-	new CTimer(5.0f, false, [szMapName]()
+	new CTimer(5.0f, false, true, [sMapName]()
 	{
-		g_pEngineServer2->ChangeLevel(szMapName, nullptr);
+		g_pEngineServer2->ChangeLevel(sMapName.c_str(), nullptr);
 		return -1.0f;
 	});
 }
@@ -1370,150 +1414,6 @@ CON_COMMAND_CHAT_FLAGS(add_dc, "<name> <SteamID 64> <IP Address> - Adds a fake p
 }
 #endif
 
-void PrecacheAdminBeaconParticle(IEntityResourceManifest* pResourceManifest)
-{
-	pResourceManifest->AddResource(g_sBeaconParticle.c_str());
-}
-
-void KillBeacon(int playerSlot)
-{
-	ZEPlayer* pPlayer = g_playerManager->GetPlayer(playerSlot);
-
-	if (!pPlayer)
-		return;
-
-	CParticleSystem* pParticle = pPlayer->GetBeaconParticle();
-
-	if (!pParticle)
-		return;
-
-	pParticle->AcceptInput("DestroyImmediately");
-
-	// delayed Kill because default particle is being silly and remains floating if not Destroyed first
-	CHandle<CParticleSystem> hParticle = pParticle->GetHandle();
-	new CTimer(0.02f, false, [hParticle]()
-	{
-		CParticleSystem* particle = hParticle.Get();
-		if (particle)
-			particle->AcceptInput("Kill");
-		return -1.0f;
-	});
-}
-
-void CreateBeacon(int playerSlot)
-{
-	CCSPlayerController* pTarget = CCSPlayerController::FromSlot(playerSlot);
-
-	Vector vecAbsOrigin = pTarget->GetPawn()->GetAbsOrigin();
-
-	vecAbsOrigin.z += 10;
-
-	CParticleSystem* particle = (CParticleSystem*)CreateEntityByName("info_particle_system");
-
-	CEntityKeyValues* pKeyValues = new CEntityKeyValues();
-
-	pKeyValues->SetString("effect_name", g_sBeaconParticle.c_str());
-	pKeyValues->SetInt("tint_cp", 1);
-	pKeyValues->SetVector("origin", vecAbsOrigin);
-	// ugly angle change because default particle is rotated
-	if (strcmp(g_sBeaconParticle.c_str(), "particles/testsystems/test_cross_product.vpcf") == 0)
-		pKeyValues->SetQAngle("angles", QAngle(90, 0, 0));
-	
-	particle->DispatchSpawn(pKeyValues);
-	particle->SetParent(pTarget->GetPawn());
-
-	ZEPlayer* pPlayer = g_playerManager->GetPlayer(playerSlot);
-	
-	pPlayer->SetBeaconParticle(particle);
-
-	CHandle<CParticleSystem> hParticle = particle->GetHandle();
-
-	// timer persists through map change so serial reset on StartupServer is not needed
-	new CTimer(0.0f, true, [playerSlot, hParticle]()
-	{
-		CCSPlayerController* pPlayer = CCSPlayerController::FromSlot(playerSlot);
-		
-		if (!pPlayer || pPlayer->m_iTeamNum < CS_TEAM_T || !pPlayer->GetPlayerPawn()->IsAlive())
-		{
-			KillBeacon(playerSlot);
-			return -1.0f;
-		}
-
-		CParticleSystem* pParticle = hParticle.Get();
-
-		if (!pParticle)
-		{
-			return -1.0f;
-		}
-
-		// team-based tint of Control Point 1
-		if (pPlayer->m_iTeamNum == CS_TEAM_T)
-			pParticle->m_clrTint->SetColor(185, 93, 63, 255);
-		else
-			pParticle->m_clrTint->SetColor(40, 100, 255, 255);
-		
-		pParticle->AcceptInput("Start");
-		// delayed DestroyImmediately input so particle effect can be replayed (and default particle doesn't bug out)
-		new CTimer(0.5f, false, [hParticle]()
-		{
-			CParticleSystem* particle = hParticle.Get();
-			if (particle)
-				particle->AcceptInput("DestroyImmediately");
-			return -1.0f;
-		});
-
-		return 1.0f;
-	});
-}
-
-void PerformBeacon(int playerSlot)
-{
-	ZEPlayer *pPlayer = g_playerManager->GetPlayer(playerSlot);
-
-	if (!pPlayer->GetBeaconParticle())
-		CreateBeacon(playerSlot);
-	else
-		KillBeacon(playerSlot);
-}
-
-CON_COMMAND_CHAT_FLAGS(beacon, "Toggle beacon on a player", ADMFLAG_GENERIC)
-{
-	if (args.ArgC() < 2)
-	{
-		ClientPrint(player, HUD_PRINTTALK, CHAT_PREFIX "Usage: !beacon <name>");
-		return;
-	}
-
-	int iCommandPlayer = player ? player->GetPlayerSlot() : -1;
-	int iNumClients = 0;
-	int pSlots[MAXPLAYERS];
-
-	ETargetType nType = g_playerManager->TargetPlayerString(iCommandPlayer, args[1], iNumClients, pSlots);
-
-	if (!iNumClients)
-	{
-		ClientPrint(player, HUD_PRINTTALK, CHAT_PREFIX "Target not found.");
-		return;
-	}
-
-	const char *pszCommandPlayerName = player ? player->GetPlayerName() : "Console";
-
-	for (int i = 0; i < iNumClients; i++)
-	{
-		CCSPlayerController* pTarget = CCSPlayerController::FromSlot(pSlots[i]);
-
-		if (!pTarget)
-			continue;
-
-		PerformBeacon(pSlots[i]);
-
-		if (nType < ETargetType::ALL)
-			PrintSingleAdminAction(pszCommandPlayerName, pTarget->GetPlayerName(), "toggled beacon on");
-	}
-
-	PrintMultiAdminAction(nType, pszCommandPlayerName, "toggled beacon on");
-}
-
 CAdminSystem::CAdminSystem()
 {
 	LoadAdmins();
@@ -1651,6 +1551,9 @@ void CAdminSystem::SaveInfractions()
 	char szPath[MAX_PATH];
 	V_snprintf(szPath, sizeof(szPath), "%s%s", Plat_GetGameDirectory(), "/csgo/addons/cs2fixes/data/infractions.txt");
 
+	// Create the directory in case it doesn't exist
+	g_pFullFileSystem->CreateDirHierarchyForFile(szPath, nullptr);
+
 	if (!pKV->SaveToFile(g_pFullFileSystem, szPath))
 		Warning("Failed to save infractions to %s\n", szPath);
 }
@@ -1703,6 +1606,21 @@ bool CAdminSystem::FindAndRemoveInfraction(ZEPlayer *player, CInfractionBase::EI
 		if (m_vecInfractions[i]->GetSteamId64() == player->GetSteamId64() && m_vecInfractions[i]->GetType() == type)
 		{
 			m_vecInfractions[i]->UndoInfraction(player);
+			m_vecInfractions.Remove(i);
+			
+			return true;
+		}
+	}
+
+	return false;
+}
+
+bool CAdminSystem::FindAndRemoveInfractionSteamId64(uint64 steamid64, CInfractionBase::EInfractionType type)
+{
+	FOR_EACH_VEC(m_vecInfractions, i)
+	{
+		if (m_vecInfractions[i]->GetSteamId64() == steamid64 && m_vecInfractions[i]->GetType() == type)
+		{
 			m_vecInfractions.Remove(i);
 			
 			return true;

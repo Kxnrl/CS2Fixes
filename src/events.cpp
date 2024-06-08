@@ -22,10 +22,14 @@
 #include "commands.h"
 #include "ctimer.h"
 #include "eventlistener.h"
+#include "networkstringtabledefs.h"
 #include "entity/cbaseplayercontroller.h"
 #include "entity/cgamerules.h"
 #include "zombiereborn.h"
 #include "votemanager.h"
+#include "leader.h"
+#include "recipientfilters.h"
+#include "panoramavote.h"
 
 #include "tier0/memdbgon.h"
 
@@ -34,6 +38,9 @@ extern IServerGameClients *g_pSource2GameClients;
 extern CGameEntitySystem *g_pEntitySystem;
 extern CGlobalVars *gpGlobals;
 extern CCSGameRules *g_pGameRules;
+extern IVEngineServer2* g_pEngineServer2;
+
+extern int g_iRoundNum;
 
 CUtlVector<CGameEventListener *> g_vecEventListeners;
 
@@ -65,8 +72,34 @@ void UnregisterEventListeners()
 	g_vecEventListeners.Purge();
 }
 
+bool g_bPurgeEntityNames = false;
+FAKE_BOOL_CVAR(cs2f_purge_entity_strings, "Whether to purge the EntityNames stringtable on new rounds", g_bPurgeEntityNames, false, false);
+
+extern void FullUpdateAllClients();
+
 GAME_EVENT_F(round_prestart)
 {
+	g_iRoundNum++;
+
+	if (g_bPurgeEntityNames)
+	{
+		INetworkStringTable *pEntityNames = g_pNetworkStringTableServer->FindTable("EntityNames");
+
+		if (pEntityNames)
+		{
+			int iStringCount = pEntityNames->GetNumStrings();
+			addresses::CNetworkStringTable_DeleteAllStrings(pEntityNames);
+
+			Message("Purged %i strings from EntityNames\n", iStringCount);
+
+			// Vauff: Not fixing cubemap fog in my testing
+			// This also breaks round start particle resets, so disabling for now
+			//pEntityNames->SetTick(-1, nullptr);
+
+			//FullUpdateAllClients();
+		}
+	}
+
 	if (g_bEnableZR)
 		ZR_OnRoundPrestart(pEvent);
 }
@@ -91,19 +124,22 @@ GAME_EVENT_F(player_spawn)
 	if (g_bEnableZR)
 		ZR_OnPlayerSpawn(pEvent);
 
-	// Rest of the code is to set debris collisions
-	if (!g_bNoblock)
-		return;
-
 	CCSPlayerController *pController = (CCSPlayerController *)pEvent->GetPlayerController("userid");
 
 	if (!pController)
 		return;
 
+	if (pController->IsConnected())
+		pController->GetZEPlayer()->OnSpawn();
+
+	// Rest of the code is to set debris collisions
+	if (!g_bNoblock)
+		return;
+
 	CHandle<CCSPlayerController> hController = pController->GetHandle();
 
 	// Gotta do this on the next frame...
-	new CTimer(0.0f, false, [hController]()
+	new CTimer(0.0f, false, false, [hController]()
 	{
 		CCSPlayerController *pController = hController.Get();
 
@@ -138,7 +174,7 @@ GAME_EVENT_F(player_hurt)
 	CCSPlayerController *pVictim = (CCSPlayerController*)pEvent->GetPlayerController("userid");
 
 	// Ignore Ts/zombies and CTs hurting themselves
-	if (!pAttacker || pAttacker->m_iTeamNum() != CS_TEAM_CT || pAttacker == pVictim)
+	if (!pAttacker || pAttacker->m_iTeamNum() != CS_TEAM_CT || pAttacker->m_iTeamNum() == pVictim->m_iTeamNum())
 		return;
 
 	ZEPlayer* pPlayer = pAttacker->GetZEPlayer();
@@ -173,10 +209,22 @@ GAME_EVENT_F(player_death)
 	pPlayer->SetTotalKills(pPlayer->GetTotalKills() + 1);
 }
 
+bool g_bFullAllTalk = false;
+FAKE_BOOL_CVAR(cs2f_full_alltalk, "Whether to enforce sv_full_alltalk 1", g_bFullAllTalk, false, false);
+
 GAME_EVENT_F(round_start)
 {
+	g_pPanoramaVoteHandler->Init();
+
 	if (g_bEnableZR)
 		ZR_OnRoundStart(pEvent);
+
+	if (g_bEnableLeader)
+		Leader_OnRoundStart(pEvent);
+
+	// Dumb workaround for CS2 always overriding sv_full_alltalk on state changes
+	if (g_bFullAllTalk)
+		g_pEngineServer2->ServerCommand("sv_full_alltalk 1");
 
 	if (!g_bEnableTopDefender)
 		return;
@@ -272,4 +320,15 @@ GAME_EVENT_F(round_time_warning)
 {
 	if (g_bEnableZR)
 		ZR_OnRoundTimeWarning(pEvent);
+}
+
+GAME_EVENT_F(bullet_impact)
+{
+	if (g_bEnableLeader)
+		Leader_BulletImpact(pEvent);
+}
+
+GAME_EVENT_F(vote_cast)
+{
+	g_pPanoramaVoteHandler->VoteCast(pEvent);
 }

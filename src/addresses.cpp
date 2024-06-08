@@ -50,8 +50,6 @@ bool addresses::Initialize(CGameConfig *g_GameConfig)
 		modules::hammer = new CModule(ROOTBIN, "tools/hammer");
 #endif
 
-	RESOLVE_SIG(g_GameConfig, "NetworkStateChanged", addresses::NetworkStateChanged);
-	RESOLVE_SIG(g_GameConfig, "StateChanged", addresses::StateChanged);
 	RESOLVE_SIG(g_GameConfig, "UTIL_ClientPrintAll", addresses::UTIL_ClientPrintAll);
 	RESOLVE_SIG(g_GameConfig, "ClientPrint", addresses::ClientPrint);
 	RESOLVE_SIG(g_GameConfig, "SetGroundEntity", addresses::SetGroundEntity);
@@ -73,6 +71,7 @@ bool addresses::Initialize(CGameConfig *g_GameConfig)
 	RESOLVE_SIG(g_GameConfig, "CBaseEntity_EmitSoundFilter", addresses::CBaseEntity_EmitSoundFilter);
 	RESOLVE_SIG(g_GameConfig, "CBaseEntity_SetMoveType", addresses::CBaseEntity_SetMoveType);
 	RESOLVE_SIG(g_GameConfig, "CTakeDamageInfo", addresses::CTakeDamageInfo_Constructor);
+	RESOLVE_SIG(g_GameConfig, "CNetworkStringTable_DeleteAllStrings", addresses::CNetworkStringTable_DeleteAllStrings);
 
 	return true;
 }

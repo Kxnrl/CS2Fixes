@@ -21,20 +21,20 @@
 
 class InputData_t;
 class CGamePlayerEquip;
-class Z_CBaseEntity;
+class CBaseEntity;
 class CGameUI;
 
 namespace CGamePlayerEquipHandler
 {
 void Use(CGamePlayerEquip* pEntity, InputData_t* pInput);
 void TriggerForAllPlayers(CGamePlayerEquip* pEntity, InputData_t* pInput);
-void TriggerForActivatedPlayer(CGamePlayerEquip* pEntity, InputData_t* pInput);
+bool TriggerForActivatedPlayer(CGamePlayerEquip* pEntity, InputData_t* pInput);
 } // namespace CGamePlayerEquipHandler
 
 namespace CGameUIHandler
 {
-bool OnActivate(CGameUI* pEntity, Z_CBaseEntity* pActivator);
-bool OnDeactivate(CGameUI* pEntity, Z_CBaseEntity* pActivator);
+bool OnActivate(CGameUI* pEntity, CBaseEntity* pActivator);
+bool OnDeactivate(CGameUI* pEntity, CBaseEntity* pActivator);
 void RunThink(int tick);
 } // namespace CGameUIHandler
 

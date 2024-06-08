@@ -94,19 +94,32 @@ public:
 	SCHEMA_FIELD(CGameSceneNode *, m_pSceneNode)
 };
 
+class CModelState
+{
+public:
+	DECLARE_SCHEMA_CLASS(CModelState)
+
+	SCHEMA_FIELD(CUtlSymbolLarge, m_ModelName)
+};
+
+class CSkeletonInstance : CGameSceneNode
+{
+public:
+	DECLARE_SCHEMA_CLASS(CSkeletonInstance)
+
+	SCHEMA_FIELD(CModelState, m_modelState)
+};
+
 class CEntitySubclassVDataBase
 {
 public:
 	DECLARE_SCHEMA_CLASS(CEntitySubclassVDataBase)
 };
 
-class Z_CBaseEntity : public CBaseEntity
+class CBaseEntity : public CEntityInstance
 {
 public:
-	// This is a unique case as CBaseEntity is already defined in the sdk
-	typedef Z_CBaseEntity ThisClass;
-	static constexpr const char *ThisClassName = "CBaseEntity";
-	static constexpr bool IsStruct = false;
+	DECLARE_SCHEMA_CLASS(CBaseEntity)
 
 	SCHEMA_FIELD(CBodyComponent *, m_CBodyComponent)
 	SCHEMA_FIELD(CBitVec<64>, m_isSteadyState)
@@ -122,7 +135,7 @@ public:
 	SCHEMA_FIELD(MoveCollide_t, m_MoveCollide)
 	SCHEMA_FIELD(MoveType_t, m_MoveType)
 	SCHEMA_FIELD(MoveType_t, m_nActualMoveType)
-	SCHEMA_FIELD(CHandle<Z_CBaseEntity>, m_hEffectEntity)
+	SCHEMA_FIELD(CHandle<CBaseEntity>, m_hEffectEntity)
 	SCHEMA_FIELD(uint32, m_spawnflags)
 	SCHEMA_FIELD(uint32, m_fFlags)
 	SCHEMA_FIELD(LifeState_t, m_lifeState)
@@ -182,13 +195,13 @@ public:
 
 	bool IsPawn()
 	{
-		static int offset = g_GameConfig->GetOffset("IsEntityPawn");
+		static int offset = g_GameConfig->GetOffset("IsPlayerPawn");
 		return CALL_VIRTUAL(bool, offset, this);
 	}
 
 	bool IsController()
 	{
-		static int offset = g_GameConfig->GetOffset("IsEntityController");
+		static int offset = g_GameConfig->GetOffset("IsPlayerController");
 		return CALL_VIRTUAL(bool, offset, this);
 	}
 
@@ -225,8 +238,14 @@ public:
 		return addresses::CBaseEntity_EmitSoundFilter(filter, entindex(), params);
 	}
 
+	void DispatchParticle(const char *pszParticleName, IRecipientFilter *pFilter, ParticleAttachment_t nAttachType = PATTACH_POINT_FOLLOW, 
+		char iAttachmentPoint = 0, CUtlSymbolLarge iAttachmentName = "")
+	{
+		addresses::DispatchParticleEffect(pszParticleName, nAttachType, this, iAttachmentPoint, iAttachmentName, false, 0, pFilter, 0);
+	}
+
 	// This was needed so we can parent to nameless entities using pointers
-	void SetParent(Z_CBaseEntity *pNewParent)
+	void SetParent(CBaseEntity *pNewParent)
 	{
 		addresses::CBaseEntity_SetParent(this, pNewParent, 0, nullptr);
 	}
@@ -239,6 +258,11 @@ public:
 	void SetMoveType(MoveType_t nMoveType)
 	{
 		addresses::CBaseEntity_SetMoveType(this, nMoveType, m_MoveCollide);
+	}
+
+	void SetGroundEntity(CBaseEntity *pGround)
+	{
+		addresses::SetGroundEntity(this, pGround, nullptr);
 	}
 
 	const char* GetName() const { return m_pEntity->m_name.String(); }
@@ -261,7 +285,7 @@ public:
 	/* End Custom Entities Cast */
 };
 
-class SpawnPoint : public Z_CBaseEntity
+class SpawnPoint : public CBaseEntity
 {
 public:
 	DECLARE_SCHEMA_CLASS(SpawnPoint);

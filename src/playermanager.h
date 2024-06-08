@@ -20,11 +20,14 @@
 #pragma once
 #include "common.h"
 #include "utlvector.h"
+#include "steam/steam_api_common.h"
 #include "steam/steamclientpublic.h"
+#include "steam/isteamuser.h"
 #include <playerslot.h>
 #include "bitvec.h"
 #include "entity/lights.h"
 #include "entity/cparticlesystem.h"
+#include "gamesystem.h"
 
 #define DECAL_PREF_KEY_NAME "hide_decals"
 #define HIDE_DISTANCE_PREF_KEY_NAME "hide_distance"
@@ -111,7 +114,12 @@ public:
 		m_iMZImmunity = 0; // out of 100
 		m_flNominateTime = -60.0f;
 		m_iPlayerState = 1; // STATE_WELCOME is the initial state
+		m_iLeaderIndex = 0;
+		m_iLeaderTracerIndex = 0;
+		m_flLeaderVoteTime = -30.0f;
 		m_flSpeedMod = 1.f;
+		m_iLastInputs = IN_NONE;
+		m_iLastInputTime = std::time(0);
 	}
 
 	~ZEPlayer()
@@ -132,7 +140,6 @@ public:
 	bool IsAdminFlagSet(uint64 iFlag);
 	bool IsFlooding();
 	
-	void SetAuthenticated() { m_bAuthenticated = true; }
 	void SetConnected() { m_bConnected = true; }
 	void SetUnauthenticatedSteamId(const CSteamID* steamID) { m_UnauthenticatedSteamID = steamID; }
 	void SetSteamId(const CSteamID* steamID) { m_SteamID = steamID; }
@@ -159,7 +166,13 @@ public:
 	void SetFlashLight(CBarnLight *pLight) { m_hFlashLight.Set(pLight); }
 	void SetBeaconParticle(CParticleSystem *pParticle) { m_hBeaconParticle.Set(pParticle); }
 	void SetPlayerState(uint32 iPlayerState) { m_iPlayerState = iPlayerState; }
+	void SetLeader(int leaderIndex);
+	void SetLeaderTracer(int tracerIndex) { m_iLeaderTracerIndex = tracerIndex; }
+	void SetLeaderVoteTime(float flCurtime) { m_flLeaderVoteTime = flCurtime; }
+	void SetGlowModel(CBaseModelEntity *pModel) { m_hGlowModel.Set(pModel); }
 	void SetSpeedMod(float flSpeedMod) { m_flSpeedMod = flSpeedMod; }
+	void SetLastInputs(uint64 iLastInputs) { m_iLastInputs = iLastInputs; }
+	void UpdateLastInputTime() { m_iLastInputTime = std::time(0); }
 
 	bool IsMuted() { return m_bMuted; }
 	bool IsGagged() { return m_bGagged; }
@@ -182,13 +195,29 @@ public:
 	CParticleSystem *GetBeaconParticle() { return m_hBeaconParticle.Get(); }
 	ZEPlayerHandle GetHandle() { return m_Handle; }
 	uint32 GetPlayerState() { return m_iPlayerState; }
+	bool IsLeader() { return (bool) m_iLeaderIndex; }
+	int GetLeaderIndex() { return m_iLeaderIndex; }
+	int GetLeaderTracer() { return m_iLeaderTracerIndex; }
+	int GetLeaderVoteCount();
+	bool HasPlayerVotedLeader(ZEPlayer* pPlayer);
+	float GetLeaderVoteTime() { return m_flLeaderVoteTime; }
+	CBaseModelEntity *GetGlowModel() { return m_hGlowModel.Get(); }
 	float GetSpeedMod() { return m_flSpeedMod; }
+	uint64 GetLastInputs() { return m_iLastInputs; }
+	std::time_t GetLastInputTime() { return m_iLastInputTime; }
 	
+	void OnSpawn();
 	void OnAuthenticated();
 	void CheckAdmin();
 	void CheckInfractions();
 	void SpawnFlashLight();
 	void ToggleFlashLight();
+	void StartBeacon(Color color, ZEPlayerHandle Giver = 0);
+	void EndBeacon();
+	void AddLeaderVote(ZEPlayer* pPlayer);
+	void PurgeLeaderVotes();
+	void StartGlow(Color color, int duration);
+	void EndGlow();
 
 private:
 	bool m_bAuthenticated;
@@ -220,7 +249,14 @@ private:
 	CHandle<CParticleSystem> m_hBeaconParticle;
 	ZEPlayerHandle m_Handle;
 	uint32 m_iPlayerState;
+	int m_iLeaderIndex;
+	CUtlVector<ZEPlayerHandle> m_vecLeaderVotes;
+	int m_iLeaderTracerIndex;
+	float m_flLeaderVoteTime;
+	CHandle<CBaseModelEntity> m_hGlowModel;
 	float m_flSpeedMod;
+	uint64 m_iLastInputs;
+	std::time_t m_iLastInputTime;
 };
 
 class CPlayerManager
@@ -229,8 +265,8 @@ public:
 	CPlayerManager(bool late = false)
 	{
 		V_memset(m_vecPlayers, 0, sizeof(m_vecPlayers));
-		m_nUsingStopSound = 0;
-		m_nUsingSilenceSound = -1; // On by default
+		m_nUsingStopSound = -1; // On by default
+		m_nUsingSilenceSound = 0;
 		m_nUsingStopDecals = -1; // On by default
 
 		if (late)
@@ -242,7 +278,7 @@ public:
 	void OnBotConnected(CPlayerSlot slot);
 	void OnClientPutInServer(CPlayerSlot slot);
 	void OnLateLoad();
-	void TryAuthenticate();
+	void OnSteamAPIActivated();
 	void CheckInfractions();
 	void FlashLightThink();
 	void CheckHideDistances();
@@ -270,6 +306,8 @@ public:
 
 	void UpdatePlayerStates();
 
+	STEAM_GAMESERVER_CALLBACK_MANUAL(CPlayerManager, OnValidateAuthTicket, ValidateAuthTicketResponse_t, m_CallbackValidateAuthTicketResponse);
+
 private:
 	ZEPlayer *m_vecPlayers[MAXPLAYERS];
 
@@ -279,3 +317,5 @@ private:
 };
 
 extern CPlayerManager *g_playerManager;
+
+void PrecacheBeaconParticle(IEntityResourceManifest* pResourceManifest);
